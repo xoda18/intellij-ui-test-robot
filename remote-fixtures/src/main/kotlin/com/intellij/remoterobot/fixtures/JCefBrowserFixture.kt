@@ -110,33 +110,61 @@ class JCefBrowserFixture(remoteRobot: RemoteRobot, remoteComponent: RemoteCompon
         AssertionError("Failed to execute script:\n$script", e)
 
     private fun initializeBrowser() = step("Inject JS scripts into the Embedded browser") {
-        runJs(
-            """
-            let currentComponent = component;
-            let jbCefBrowser = null;
-            while (currentComponent !== null && jbCefBrowser === null) {
-                try {
-                    jbCefBrowser = currentComponent.getClientProperty("$JB_BROWSER_KEY");
-                } catch (e) { }
-                if (jbCefBrowser === null) {
-                    currentComponent = currentComponent.getParent();
+        // Add retry logic with timeout to handle JCEF initialization delays on Linux
+        var lastError: Throwable? = null
+        var attempts = 0
+        val maxAttempts = 10
+        val retryDelayMs = 500L
+
+        while (attempts < maxAttempts) {
+            try {
+                runJs(
+                    """
+                    let currentComponent = component;
+                    let jbCefBrowser = null;
+                    while (currentComponent !== null && jbCefBrowser === null) {
+                        try {
+                            jbCefBrowser = currentComponent.getClientProperty("$JB_BROWSER_KEY");
+                        } catch (e) { }
+                        if (jbCefBrowser === null) {
+                            currentComponent = currentComponent.getParent();
+                        }
+                    }
+                    if (!jbCefBrowser) {
+                        throw new Error("Can't find jbCefBrowser client property");
+                    }
+                    const cefBrowser = jbCefBrowser.getCefBrowser();
+
+                    if (!cefBrowser) {
+                        throw new Error("Can't find cefBrowser from jbCefBrowser.getCefBrowser()");
+                    }
+                    local.put("$JB_CEF_BROWSER_KEY", jbCefBrowser);
+                    local.put("$CEF_BROWSER_KEY", cefBrowser);
+
+                    const query = com.intellij.ui.jcef.JBCefJSQuery.create(jbCefBrowser)
+                    query.addHandler((result)=> ctx.put("$RESULT_KEY", result))
+                    local.put("$QUERY_KEY", query)
+                """
+                )
+                // If we get here, initialization succeeded
+                return@step
+            } catch (e: Throwable) {
+                lastError = e
+                attempts++
+                if (attempts < maxAttempts) {
+                    log.warn("JCEF initialization attempt $attempts failed, retrying in ${retryDelayMs}ms: ${e.message}")
+                    Thread.sleep(retryDelayMs)
                 }
             }
-            if (!jbCefBrowser) {
-                throw new Error("Can't find cef browser");
-            }
-            const cefBrowser = jbCefBrowser.getCefBrowser();
-
-            if (!cefBrowser) {
-                throw new Error("Can't find cef browser");
-            }
-            local.put("$JB_CEF_BROWSER_KEY", jbCefBrowser);
-            local.put("$CEF_BROWSER_KEY", cefBrowser);
-            
-            const query = com.intellij.ui.jcef.JBCefJSQuery.create(jbCefBrowser)
-            query.addHandler((result)=> ctx.put("$RESULT_KEY", result))
-            local.put("$QUERY_KEY", query)            
-        """
+        }
+        // If we exhausted all retries, throw the last error
+        throw IllegalStateException(
+            "Failed to initialize JCEF browser after $maxAttempts attempts. " +
+            "This may indicate: " +
+            "1) JCEF is not fully initialized yet " +
+            "2) Missing -Dide.browser.jcef.jsQueryPoolSize=10000 system property " +
+            "3) Platform-specific JCEF issues (check GPU/display configuration on Linux)",
+            lastError
         )
     }
 

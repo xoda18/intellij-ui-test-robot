@@ -48,7 +48,7 @@ intellijPlatformTesting.runIde {
     runIdeForUiTests {
         task {
             jvmArgumentProviders.add({
-                [
+                def args = [
                         "-Drobot-server.port=8082",
                         "-Dide.mac.message.dialogs.as.sheets=false",
                         "-Djb.privacy.policy.text=<!--999.999-->",
@@ -58,7 +58,18 @@ intellijPlatformTesting.runIde {
                         "-Dapple.laf.useScreenMenuBar=false",
                         "-Didea.trust.all.projects=true",
                         "-Dide.show.tips.on.startup.default.value=false",
+                        "-Dide.browser.jcef.jsQueryPoolSize=10000",
+                        "-Dide.browser.jcef.headless.enabled=false",
+                        "-Djcef.trace.cefbrowser=true",
                 ]
+                // Add Linux-specific GPU and rendering settings for headless environments
+                if (System.getProperty("os.name").toLowerCase().contains("linux")) {
+                    args.addAll([
+                        "-Dide.browser.jcef.gpu.disable=false",
+                        "-Djcef.browser.offScreenRendering=false",
+                    ])
+                }
+                return args
             } as CommandLineArgumentProvider)
         }
         plugins {
